@@ -26,6 +26,8 @@ typedef struct
     __ino_t inode;
     char filename[MAX_PATH];
     struct stat st;
+    char targetPath[MAX_PATH]; // 用于存储链接的目标路径
+    time_t mTime;
 } FileInfo, *FFileInfo;
 
 typedef struct Node
@@ -40,7 +42,8 @@ size_t maxSizeWidth = 0;
 void printLs_R(const char *dirPath, int flags);
 void listFiles(const char *path, int flags);
 void printFileInfo(FileInfo *fileInfo, int flags);
-
+// 比较函数
+// 字典
 int compareFileInfoAsc(const void *a, const void *b)
 {
     setlocale(LC_COLLATE, ""); // 设置本地化环境
@@ -51,6 +54,17 @@ int compareFileInfoDesc(const void *a, const void *b)
 {
     setlocale(LC_COLLATE, ""); // 设置本地化环境
     return strcoll(((FileInfo *)b)->filename, ((FileInfo *)a)->filename);
+}
+
+// 时间
+int compareFileInfoAscByTime(const void *a, const void *b)
+{
+    return ((FileInfo *)a)->mTime - ((FileInfo *)b)->mTime;
+}
+
+int compareFileInfoDescByTime(const void *a, const void *b)
+{
+    return ((FileInfo *)b)->mTime - ((FileInfo *)a)->mTime;
 }
 
 void push(Stack *stack, const char *path)
@@ -72,7 +86,8 @@ void pop(Stack *stack)
     if (*stack == NULL)
     {
         fprintf(stderr, "Error: Trying to pop from an empty stack.\n");
-        exit(EXIT_FAILURE);
+        // exit(EXIT_FAILURE);
+        return;
     }
 
     Node *temp = *stack;
@@ -122,25 +137,26 @@ int main(int argc, char *argv[])
             }
         }
     }
-
-    if (argc == 1)
+    int t = 0;
+    int tflag = 1;
+    if (argc != 1)
     {
-        listFiles(".", flags);
-    }
-    else
-    {
-        for (int i = 1; i < argc; i++)
+        for (t = 1; t < argc; t++)
         {
-            if (argv[i][0] != '-')
+            if (argv[t][0] != '-')
             {
-                listFiles(argv[i], flags);
+                tflag = 0;
+                listFiles(argv[t], flags);
             }
         }
+    }
+    if (tflag && (!argv[t] && argc != 1) || argc == 1)
+    {
+        listFiles(".", flags);
     }
 
     return 0;
 }
-
 
 void printLs_R(const char *dirPath, int flags)
 {
@@ -156,8 +172,8 @@ void printLs_R(const char *dirPath, int flags)
         DIR *dir = opendir(currentPath);
         if (dir == NULL)
         {
-            perror("Error opening directory");
-            exit(EXIT_FAILURE);
+            perror("Error opening directory!");
+            return;
         }
 
         struct dirent *entry;
@@ -175,10 +191,10 @@ void printLs_R(const char *dirPath, int flags)
             snprintf(fullPath, sizeof(fullPath), "%s/%s", currentPath, entry->d_name);
 
             struct stat st;
-            if (stat(fullPath, &st) == -1)
+            if (lstat(fullPath, &st) == -1) // 使用 lstat 来获取链接信息
             {
-                // perror("Error getting file status");
-                // exit(EXIT_FAILURE);
+                perror("Error getting file status");
+                continue;
             }
 
             count++;
@@ -186,18 +202,60 @@ void printLs_R(const char *dirPath, int flags)
             fileInfo[count - 1].inode = entry->d_ino;
             strcpy(fileInfo[count - 1].filename, entry->d_name);
             fileInfo[count - 1].st = st;
+            fileInfo[count - 1].mTime = st.st_mtime;
+
+            // 如果是链接，获取链接的目标路径
+            if (S_ISLNK(st.st_mode))
+            {
+                ssize_t targetSize = readlink(fullPath, fileInfo[count - 1].targetPath, MAX_PATH - 1);
+                if (targetSize != -1)
+                {
+                    fileInfo[count - 1].targetPath[targetSize] = '\0';
+                }
+                else
+                {
+                    perror("Error reading symlink target");
+                }
+            }
+            else
+            {
+                fileInfo[count - 1].targetPath[0] = '\0';
+            }
         }
 
-        // 根据是否有 -r 标志选择比较函数
+        // 根据是否有 -r -t 标志选择比较函数
         int (*compareFunction)(const void *, const void *);
 
-        if (flags & FLAG_R2)
+        if (flags & FLAG_R)
         {
-            compareFunction = compareFileInfoDesc;
+            if (flags & FLAG_R2)
+            {
+                compareFunction = compareFileInfoAsc;
+            }
+            else
+            {
+                compareFunction = compareFileInfoDesc;
+            }
         }
         else
         {
-            compareFunction = compareFileInfoAsc;
+            if (flags & FLAG_R2)
+            {
+                compareFunction = compareFileInfoDesc;
+            }
+            else
+            {
+                compareFunction = compareFileInfoAsc;
+            }
+        }
+        if (flags & FLAG_T)
+        {
+            if (compareFunction == compareFileInfoAsc)
+            {
+                compareFunction = compareFileInfoAscByTime;
+            }
+            else
+                compareFunction = compareFileInfoDescByTime;
         }
 
         // 排序文件信息数组
@@ -214,11 +272,13 @@ void printLs_R(const char *dirPath, int flags)
             {
                 char tPath[MAX_PATH];
                 snprintf(tPath, sizeof(tPath), "%s/%s", currentPath, fileInfo[i].filename);
-                printf("\n%s%s%s:\n", BLUE, fileInfo[i].filename, NONE);
+                printf("\n%s%s/%s%s:\n", BLUE, currentPath, fileInfo[i].filename, NONE);
                 push(&stack, tPath);
+                // printLs_R(tPath, flags);
             }
-
+        // pop(&stack);
         free(fileInfo); // 释放动态分配的内存
+
         closedir(dir);
     }
 }
@@ -226,10 +286,10 @@ void printLs_R(const char *dirPath, int flags)
 void listFiles(const char *path, int flags)
 {
     struct stat st;
-    if (stat(path, &st) == -1)
+    if (lstat(path, &st) == -1) // 使用 lstat 来获取链接信息
     {
         perror("Error getting file status");
-        exit(EXIT_FAILURE);
+        return;
     }
 
     if (S_ISDIR(st.st_mode))
@@ -242,6 +302,25 @@ void listFiles(const char *path, int flags)
         fileInfo.inode = st.st_ino;
         strcpy(fileInfo.filename, path);
         fileInfo.st = st;
+        fileInfo.mTime = st.st_mtime;
+        // 如果是链接，获取链接的目标路径
+        if (S_ISLNK(st.st_mode))
+        {
+            ssize_t targetSize = readlink(path, fileInfo.targetPath, MAX_PATH - 1);
+            if (targetSize != -1)
+            {
+                fileInfo.targetPath[targetSize] = '\0';
+            }
+            else
+            {
+                perror("Error reading symlink target");
+            }
+        }
+        else
+        {
+            fileInfo.targetPath[0] = '\0';
+        }
+
         printFileInfo(&fileInfo, flags);
     }
 }
@@ -260,7 +339,7 @@ void printFileInfo(FileInfo *fileInfo, int flags)
 
     if (flags & FLAG_S)
     {
-        printf(" %*lu", (int)maxSizeWidth, (fileInfo->st.st_blocks * 512) / 1024);
+        printf(" %*luK", (int)maxSizeWidth, fileInfo->st.st_blocks);
     }
 
     if (flags & FLAG_L)
@@ -284,10 +363,17 @@ void printFileInfo(FileInfo *fileInfo, int flags)
         printf(" %*lld", (int)maxSizeWidth, (long long)fileInfo->st.st_size);
         printf(" %.12s", ctime(&fileInfo->st.st_mtime) + 4);
     }
-    //输出文件名称
+
+    // 输出文件名称和链接目标路径
     const char *colorCode = (S_ISDIR(fileInfo->st.st_mode)) ? BLUE : (fileInfo->st.st_mode & S_IXUSR || fileInfo->st.st_mode & S_IXGRP || fileInfo->st.st_mode & S_IXOTH) ? GREEN
                                                                                                                                                                           : NONE;
-
     printf(" %s%s%s", colorCode, fileInfo->filename, NONE);
+
+    // 如果是链接，输出链接目标路径
+    if (S_ISLNK(fileInfo->st.st_mode))
+    {
+        printf(" -> %s", fileInfo->targetPath);
+    }
+
     printf("\n");
 }
