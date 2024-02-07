@@ -6,7 +6,8 @@
 #include <unistd.h>
 #include <time.h>
 #include <locale.h>
-
+#include <grp.h>
+#include <pwd.h>
 #define MAX_PATH 1024
 
 #define FLAG_L 0b00000001
@@ -357,9 +358,22 @@ void printFileInfo(FileInfo *fileInfo, int flags)
         perms[9] = (fileInfo->st.st_mode & S_IXOTH) ? 'x' : '-';
         perms[10] = '\0';
 
+
         printf("%s %2lu", perms, fileInfo->st.st_nlink);
-        printf(" %5u", fileInfo->st.st_uid);
-        printf(" %5u", fileInfo->st.st_gid);
+        
+        struct passwd *pwd = getpwuid(fileInfo->st.st_uid);
+        if(NULL == pwd){
+            perror("getpwuid");
+            return;
+        }
+        printf(" %s" , pwd->pw_name);
+
+        struct group *grp = getgrgid(fileInfo->st.st_gid);
+        if(NULL == grp){
+            perror("getgrgid");
+            return;
+        }
+        printf(" %s", grp->gr_name);
         printf(" %*lld", (int)maxSizeWidth, (long long)fileInfo->st.st_size);
         printf(" %.12s", ctime(&fileInfo->st.st_mtime) + 4);
     }
