@@ -8,7 +8,8 @@
 #include <locale.h>
 #include <grp.h>
 #include <pwd.h>
-#define MAX_PATH 1024
+#include <limits.h>
+#define MAX_PATH 4096
 
 #define FLAG_L 0b00000001
 #define FLAG_R 0b00000010
@@ -168,13 +169,15 @@ void printLs_R(const char *dirPath, int flags)
     {
         char currentPath[MAX_PATH];
         strncpy(currentPath, stack->path, MAX_PATH);
+        printf("\n%s%s%s:\n", BLUE, currentPath, NONE);
         pop(&stack);
 
         DIR *dir = opendir(currentPath);
         if (dir == NULL)
         {
             perror("Error opening directory!");
-            return;
+            continue;
+            // return;
         }
 
         struct dirent *entry;
@@ -272,8 +275,11 @@ void printLs_R(const char *dirPath, int flags)
             if ((flags & FLAG_R) && S_ISDIR(fileInfo[i].st.st_mode) && strcmp(fileInfo[i].filename, "..") != 0 && strcmp(fileInfo[i].filename, ".") != 0)
             {
                 char tPath[MAX_PATH];
+                if(strcmp(currentPath,"/") == 0){
+                    snprintf(tPath, sizeof(tPath), "%s%s", currentPath, fileInfo[i].filename);
+                }else
                 snprintf(tPath, sizeof(tPath), "%s/%s", currentPath, fileInfo[i].filename);
-                printf("\n%s%s/%s%s:\n", BLUE, currentPath, fileInfo[i].filename, NONE);
+                // printf("\n%s%s/%s%s:\n", BLUE, currentPath, fileInfo[i].filename, NONE);
                 push(&stack, tPath);
                 // printLs_R(tPath, flags);
             }
